@@ -1,0 +1,36 @@
+name: Enviar datos de clima a ThingSpeak
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"  # Cada 10 minutos
+  workflow_dispatch: # Permite ejecución manual
+
+jobs:
+  update-weather:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar API de AccuWeather
+        id: clima
+        run: |
+          LOCATION_KEY="351463"  # Fray Bentos, Uruguay
+          WEATHER=$(curl -s "http://dataservice.accuweather.com/currentconditions/v1/${LOCATION_KEY}?apikey=${{ secrets.ACCUWEATHER_API_KEY }}&details=true")
+          echo "Respuesta del clima: $WEATHER"
+          TEMP_EXT=$(echo "$WEATHER" | jq -r '.[0].Temperature.Metric.Value')
+          HUM_EXT=$(echo "$WEATHER" | jq -r '.[0].RelativeHumidity')
+          echo "temp_ext=$TEMP_EXT" >> $GITHUB_OUTPUT
+          echo "hum_ext=$HUM_EXT" >> $GITHUB_OUTPUT
+
+      - name: Calcular y enviar a ThingSpeak
+        run: |
+          TEMP_INT=$(echo "${{ steps.clima.outputs.temp_ext }} + 3" | bc)
+          HUM_INT=$(echo "${{ steps.clima.outputs.hum_ext }} + 2" | bc)
+          PRESION=$(echo "1010 + ($RANDOM % 10)" | bc)
+          ALTITUD=30
+          PESO=$(echo "50 + ($RANDOM % 5)" | bc)
+
+          URL="https://api.thingspeak.com/update?api_key=${{ secrets.THINGSPEAK_API_KEY }}\
+          &field1=${TEMP_INT}&field2=${HUM_INT}&field3=${PRESION}&field4=${ALTITUD}&field5=${PESO}\
+          &field6=${{ steps.clima.outputs.temp_ext }}&field7=${{ steps.clima.outputs.hum_ext }}"
+
+          echo "Enviando a ThingSpeak: $URL"
+          curl -s "$URL"
