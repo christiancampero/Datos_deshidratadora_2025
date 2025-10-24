@@ -1,98 +1,138 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<title>Monitor de Clima - Fray Bentos</title>
-<style>
-  body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f4; }
-  table { margin: 20px auto; border-collapse: collapse; background: white; }
-  th, td { border: 1px solid #ccc; padding: 8px 12px; }
-  th { background-color: #007bff; color: white; }
-  .status { margin: 10px; font-weight: bold; }
-  button { margin: 10px; padding: 10px 20px; cursor: pointer; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Generador de Temperaturas - Fray Bentos</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f3f3;
+      color: #222;
+      text-align: center;
+      padding: 20px;
+    }
+    table {
+      margin: 20px auto;
+      border-collapse: collapse;
+      width: 80%;
+    }
+    th, td {
+      border: 1px solid #888;
+      padding: 8px;
+    }
+    th {
+      background: #0066cc;
+      color: #fff;
+    }
+    tr:nth-child(even) {
+      background: #e9e9e9;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+  </style>
 </head>
 <body>
-  <h2>Clima en Fray Bentos (AccuWeather + ThingSpeak)</h2>
-  <p class="status" id="status">Último envío: cargando...</p>
-  <button onclick="descargarJSON()">Descargar JSON</button>
-  <button onclick="descargarExcel()">Descargar Excel</button>
-
+  <h1>Generador de Temperaturas - Fray Bentos</h1>
+  <p>Envío de datos a ThingSpeak cada 10 segundos.</p>
+  <button id="descargar">Descargar JSON</button>
   <table id="tabla">
     <thead>
-      <tr><th>Fecha</th><th>T. Interna (°C)</th><th>T. Externa (°C)</th></tr>
+      <tr>
+        <th>Hora</th>
+        <th>Temp. Externa (°C)</th>
+        <th>Temp. Interna (°C)</th>
+      </tr>
     </thead>
     <tbody></tbody>
   </table>
 
   <script>
-    const CHANNEL_ID = "2027269"; // Reemplaza con tu ID real de ThingSpeak
-    const URL = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=20`;
-    const STATUS_URL = "https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds/last.json";
+    const ACCUWEATHER_API_KEY = "YOUR_ACCUWEATHER_API_KEY";
+    const THINGSPEAK_WRITE_API_KEY = "YOUR_THINGSPEAK_WRITE_API_KEY";
+    const LOCATION_KEY = "331168"; // Fray Bentos, Uruguay
 
-    async function cargarDatos() {
+    let datosGenerados = [];
+
+    async function obtenerTemperaturaExterna() {
       try {
-        const res = await fetch(URL);
-        const data = await res.json();
-        const tbody = document.querySelector("tbody");
-        tbody.innerHTML = "";
-        data.feeds.forEach(f => {
-          tbody.innerHTML += `<tr>
-            <td>${new Date(f.created_at).toLocaleString()}</td>
-            <td>${f.field1}</td>
-            <td>${f.field6}</td>
-          </tr>`;
-        });
-      } catch (e) {
-        console.error("Error al cargar datos:", e);
+        const url = `https://dataservice.accuweather.com/currentconditions/v1/${LOCATION_KEY}?apikey=${ACCUWEATHER_API_KEY}&details=true`;
+        const respuesta = await fetch(url);
+        const datos = await respuesta.json();
+        const tempC = datos[0].Temperature.Metric.Value;
+        console.log("✅ Temperatura externa obtenida desde AccuWeather:", tempC, "°C");
+        return tempC;
+      } catch (error) {
+        console.error("❌ Error obteniendo datos de AccuWeather:", error);
+        return null;
       }
     }
 
-    async function cargarUltimoEnvio() {
+    async function enviarAThingSpeak(tempInterna, tempExterna) {
+      const url = `https://api.thingspeak.com/update?api_key=${THINGSPEAK_WRITE_API_KEY}&field1=${tempInterna}&field6=${tempExterna}`;
       try {
-        const res = await fetch(STATUS_URL);
-        const data = await res.json();
-        if (data && data.entry_id) {
-          document.getElementById("status").textContent =
-            `✅ Último envío (entry_id: ${data.entry_id}) - ${new Date(data.created_at).toLocaleString()}`;
-        } else {
-          document.getElementById("status").textContent = "⚠️ No se pudo obtener el último envío.";
-        }
-      } catch {
-        document.getElementById("status").textContent = "⚠️ Error al verificar el último envío.";
+        const respuesta = await fetch(url, { method: "GET" });
+        const resultado = await respuesta.text();
+        console.log(`📤 Datos enviados a ThingSpeak → Entry ID: ${resultado}`);
+      } catch (error) {
+        console.error("❌ Error al enviar datos a ThingSpeak:", error);
       }
     }
 
-    async function descargarJSON() {
-      const res = await fetch(URL);
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data.feeds, null, 2)], {type: "application/json"});
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "datos.json";
-      a.click();
+    function agregarFilaTabla(tempExt, tempInt) {
+      const tabla = document.querySelector("#tabla tbody");
+      const fila = document.createElement("tr");
+      const hora = new Date().toLocaleTimeString();
+      fila.innerHTML = `
+        <td>${hora}</td>
+        <td>${tempExt ? tempExt.toFixed(2) : 'N/A'}</td>
+        <td>${tempInt ? tempInt.toFixed(2) : 'N/A'}</td>
+      `;
+      tabla.appendChild(fila);
     }
 
-    async function descargarExcel() {
-      const res = await fetch(URL);
-      const data = await res.json();
-      let csv = "Fecha,TempInterna,TempExterna\n";
-      data.feeds.forEach(f => {
-        csv += `${f.created_at},${f.field1},${f.field6}\n`;
+    async function cicloDeEnvio() {
+      console.log("\n⏱️ Iniciando ciclo de actualización...");
+      const tempExt = await obtenerTemperaturaExterna();
+      if (tempExt === null) {
+        console.warn("⚠️ No se pudo obtener la temperatura externa. Saltando envío.");
+        return;
+      }
+      const tempInt = tempExt + 3;
+      console.log(`🌡️ Temperatura externa: ${tempExt}°C | interna: ${tempInt}°C`);
+
+      await enviarAThingSpeak(tempInt, tempExt);
+
+      datosGenerados.push({
+        timestamp: new Date().toISOString(),
+        temperatura_externa: tempExt,
+        temperatura_interna: tempInt
       });
-      const blob = new Blob([csv], {type: "text/csv"});
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "datos.csv";
-      a.click();
+
+      agregarFilaTabla(tempExt, tempInt);
     }
 
-    cargarDatos();
-    cargarUltimoEnvio();
-    setInterval(() => {
-      cargarDatos();
-      cargarUltimoEnvio();
-    }, 60000);
+    // Descargar datos en JSON
+    document.getElementById("descargar").addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify(datosGenerados, null, 2)], { type: "application/json" });
+      const enlace = document.createElement("a");
+      enlace.href = URL.createObjectURL(blob);
+      enlace.download = "datos_temperatura.json";
+      enlace.click();
+    });
+
+    // Inicia el envío cada 10 segundos
+    cicloDeEnvio();
+    setInterval(cicloDeEnvio, 10000);
   </script>
 </body>
 </html>
