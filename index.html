@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Monitor de Temperatura - Fray Bentos</title>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; }
+  button { margin: 10px; padding: 10px 20px; }
+  table { margin: 20px auto; border-collapse: collapse; }
+  th, td { border: 1px solid #ccc; padding: 8px; }
+</style>
+</head>
+<body>
+  <h2>Datos en tiempo real (ThingSpeak)</h2>
+  <button onclick="descargarJSON()">Descargar JSON</button>
+  <button onclick="descargarExcel()">Descargar Excel</button>
+  <table id="tabla">
+    <thead><tr><th>Fecha</th><th>T. Interna (°C)</th><th>T. Externa (°C)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const CHANNEL_ID = "2027269"; // Reemplaza con tu canal de ThingSpeak
+    const URL = `https://api.thingspeak.com/channels/${2027269}/feeds.json?results=100`;
+
+    async function cargarDatos() {
+      const res = await fetch(URL);
+      const data = await res.json();
+      const tbody = document.querySelector("tbody");
+      tbody.innerHTML = "";
+      data.feeds.forEach(f => {
+        const fila = `<tr>
+          <td>${new Date(f.created_at).toLocaleString()}</td>
+          <td>${f.field1}</td>
+          <td>${f.field6}</td>
+        </tr>`;
+        tbody.innerHTML += fila;
+      });
+      return data.feeds;
+    }
+
+    async function descargarJSON() {
+      const feeds = await cargarDatos();
+      const blob = new Blob([JSON.stringify(feeds, null, 2)], {type: "application/json"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "datos.json";
+      a.click();
+    }
+
+    async function descargarExcel() {
+      const feeds = await cargarDatos();
+      let csv = "Fecha,TempInterna,TempExterna\n";
+      feeds.forEach(f => {
+        csv += `${f.created_at},${f.field1},${f.field6}\n`;
+      });
+      const blob = new Blob([csv], {type: "text/csv"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "datos.csv";
+      a.click();
+    }
+
+    cargarDatos();
+    setInterval(cargarDatos, 15000);
+  </script>
+</body>
+</html>
