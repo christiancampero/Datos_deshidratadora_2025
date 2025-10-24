@@ -2,7 +2,7 @@ name: Enviar datos de clima a ThingSpeak
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # Cada 10 minutos
+    - cron: "*/1 * * * *"   # Cada 10 minutos
   workflow_dispatch:
 
 jobs:
