@@ -2,46 +2,71 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Monitor de Temperatura - Fray Bentos</title>
+<title>Monitor de Clima - Fray Bentos</title>
 <style>
-  body { font-family: Arial, sans-serif; text-align: center; }
-  button { margin: 10px; padding: 10px 20px; }
-  table { margin: 20px auto; border-collapse: collapse; }
-  th, td { border: 1px solid #ccc; padding: 8px; }
+  body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f4; }
+  table { margin: 20px auto; border-collapse: collapse; background: white; }
+  th, td { border: 1px solid #ccc; padding: 8px 12px; }
+  th { background-color: #007bff; color: white; }
+  .status { margin: 10px; font-weight: bold; }
+  button { margin: 10px; padding: 10px 20px; cursor: pointer; }
 </style>
 </head>
 <body>
-  <h2>Datos en tiempo real (ThingSpeak)</h2>
+  <h2>Clima en Fray Bentos (AccuWeather + ThingSpeak)</h2>
+  <p class="status" id="status">Último envío: cargando...</p>
   <button onclick="descargarJSON()">Descargar JSON</button>
   <button onclick="descargarExcel()">Descargar Excel</button>
+
   <table id="tabla">
-    <thead><tr><th>Fecha</th><th>T. Interna (°C)</th><th>T. Externa (°C)</th></tr></thead>
+    <thead>
+      <tr><th>Fecha</th><th>T. Interna (°C)</th><th>T. Externa (°C)</th></tr>
+    </thead>
     <tbody></tbody>
   </table>
 
   <script>
-    const CHANNEL_ID = "2027269"; // Reemplaza con tu canal de ThingSpeak
-    const URL = `https://api.thingspeak.com/channels/${2027269}/feeds.json?results=100`;
+    const CHANNEL_ID = "2027269"; // Reemplaza con tu ID real de ThingSpeak
+    const URL = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=20`;
+    const STATUS_URL = "https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds/last.json";
 
     async function cargarDatos() {
-      const res = await fetch(URL);
-      const data = await res.json();
-      const tbody = document.querySelector("tbody");
-      tbody.innerHTML = "";
-      data.feeds.forEach(f => {
-        const fila = `<tr>
-          <td>${new Date(f.created_at).toLocaleString()}</td>
-          <td>${f.field1}</td>
-          <td>${f.field6}</td>
-        </tr>`;
-        tbody.innerHTML += fila;
-      });
-      return data.feeds;
+      try {
+        const res = await fetch(URL);
+        const data = await res.json();
+        const tbody = document.querySelector("tbody");
+        tbody.innerHTML = "";
+        data.feeds.forEach(f => {
+          tbody.innerHTML += `<tr>
+            <td>${new Date(f.created_at).toLocaleString()}</td>
+            <td>${f.field1}</td>
+            <td>${f.field6}</td>
+          </tr>`;
+        });
+      } catch (e) {
+        console.error("Error al cargar datos:", e);
+      }
+    }
+
+    async function cargarUltimoEnvio() {
+      try {
+        const res = await fetch(STATUS_URL);
+        const data = await res.json();
+        if (data && data.entry_id) {
+          document.getElementById("status").textContent =
+            `✅ Último envío (entry_id: ${data.entry_id}) - ${new Date(data.created_at).toLocaleString()}`;
+        } else {
+          document.getElementById("status").textContent = "⚠️ No se pudo obtener el último envío.";
+        }
+      } catch {
+        document.getElementById("status").textContent = "⚠️ Error al verificar el último envío.";
+      }
     }
 
     async function descargarJSON() {
-      const feeds = await cargarDatos();
-      const blob = new Blob([JSON.stringify(feeds, null, 2)], {type: "application/json"});
+      const res = await fetch(URL);
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data.feeds, null, 2)], {type: "application/json"});
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = "datos.json";
@@ -49,9 +74,10 @@
     }
 
     async function descargarExcel() {
-      const feeds = await cargarDatos();
+      const res = await fetch(URL);
+      const data = await res.json();
       let csv = "Fecha,TempInterna,TempExterna\n";
-      feeds.forEach(f => {
+      data.feeds.forEach(f => {
         csv += `${f.created_at},${f.field1},${f.field6}\n`;
       });
       const blob = new Blob([csv], {type: "text/csv"});
@@ -62,7 +88,11 @@
     }
 
     cargarDatos();
-    setInterval(cargarDatos, 15000);
+    cargarUltimoEnvio();
+    setInterval(() => {
+      cargarDatos();
+      cargarUltimoEnvio();
+    }, 60000);
   </script>
 </body>
 </html>
