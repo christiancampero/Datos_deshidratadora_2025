@@ -3,97 +3,87 @@ name: Enviar datos de clima a ThingSpeak
 on:
   schedule:
     - cron: "*/10 * * * *"   # Cada 10 minutos
-  workflow_dispatch:         # Permite ejecución manual
+  workflow_dispatch:
 
 jobs:
   update-weather:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Preparar entorno
+      - name: Instalar dependencias
         run: |
-          echo "Comenzando job: enviar clima a ThingSpeak"
-          which curl || apt-get update && apt-get install -y curl
-          which jq || apt-get update && apt-get install -y jq
+          apt-get update && apt-get install -y curl jq bc
 
-      - name: Obtener condiciones actuales desde AccuWeather
+      - name: Obtener LocationKey dinámico para Fray Bentos
+        id: location
+        env:
+          ACCU_KEY: ${{ secrets.ACCUWEATHER_API_KEY }}
+        run: |
+          CITY="Fray Bentos"
+          COUNTRY_CODE="UY"
+          echo "Buscando LocationKey para ${CITY}, ${COUNTRY_CODE}"
+          SEARCH_URL="http://dataservice.accuweather.com/locations/v1/cities/search?apikey=${ACCU_KEY}&q=${CITY},${COUNTRY_CODE}"
+          RESPONSE=$(curl -s "$SEARCH_URL")
+          LOCATION_KEY=$(echo "$RESPONSE" | jq -r '.[0].Key')
+          if [ -z "$LOCATION_KEY" ] || [ "$LOCATION_KEY" = "null" ]; then
+            echo "ERROR: No se encontró LocationKey para ${CITY}"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          echo "LocationKey encontrado: ${LOCATION_KEY}"
+          echo "location_key=${LOCATION_KEY}" >> $GITHUB_OUTPUT
+
+      - name: Obtener datos de clima desde AccuWeather
         id: clima
         env:
           ACCU_KEY: ${{ secrets.ACCUWEATHER_API_KEY }}
         run: |
-          set -e
-          LOCATION_KEY="350550"   # Fray Bentos, Uruguay (ajustar si se desea otro)
-          echo "Consultando AccuWeather para locationKey=${LOCATION_KEY}"
-          RAW=$(curl -s "http://dataservice.accuweather.com/currentconditions/v1/${LOCATION_KEY}?apikey=${ACCU_KEY}&details=true")
-          echo "RAW: $RAW"
-          # Extraer temperature (Metric.Value) y relative humidity de la primera entrada
+          LOCATION_KEY="${{ steps.location.outputs.location_key }}"
+          WEATHER_URL="http://dataservice.accuweather.com/currentconditions/v1/${LOCATION_KEY}?apikey=${ACCU_KEY}&details=true"
+          RAW=$(curl -s "$WEATHER_URL")
           TEMP_EXT=$(echo "$RAW" | jq -r '.[0].Temperature.Metric.Value // empty')
           HUM_EXT=$(echo "$RAW" | jq -r '.[0].RelativeHumidity // empty')
-          # Validar
           if [ -z "$TEMP_EXT" ] || [ -z "$HUM_EXT" ]; then
-            echo "ERROR: No se pudo extraer temp o humedad desde la respuesta de AccuWeather"
-            echo "raw_response<<EOF" >> $GITHUB_OUTPUT
-            echo "$RAW" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "Error al obtener datos del clima."
+            echo "$RAW"
             exit 1
           fi
-          echo "temp_ext=$TEMP_EXT" >> $GITHUB_OUTPUT
-          echo "hum_ext=$HUM_EXT" >> $GITHUB_OUTPUT
-          echo "::debug::Temperatura externa = $TEMP_EXT ; Humedad externa = $HUM_EXT"
+          echo "temp_ext=${TEMP_EXT}" >> $GITHUB_OUTPUT
+          echo "hum_ext=${HUM_EXT}" >> $GITHUB_OUTPUT
+          echo "Datos de clima: TempExt=${TEMP_EXT}, HumExt=${HUM_EXT}"
 
-      - name: Calcular campos y enviar a ThingSpeak
+      - name: Calcular y enviar datos a ThingSpeak
+        id: envio
         env:
           THINGS_KEY: ${{ secrets.THINGSPEAK_API_KEY }}
         run: |
-          set -e
           TEMP_EXT="${{ steps.clima.outputs.temp_ext }}"
           HUM_EXT="${{ steps.clima.outputs.hum_ext }}"
-
-          # Calculos sencillos (puedes cambiar las fórmulas)
-          # Temperatura interna = externa + 3
-          # Humedad interna = externa + 2 (ejemplo)
-          # Presión = 1010..1019 (aleatorio)
-          # Altitud = valor fijo de ejemplo
-          # Peso = ejemplo aleatorio
-          TEMP_INT=$(printf "%.2f" "$(echo "$TEMP_EXT + 3" | bc -l)")
-          HUM_INT=$(printf "%.0f" "$(echo "$HUM_EXT + 2" | bc -l)")
+          TEMP_INT=$(echo "$TEMP_EXT + 3" | bc)
+          HUM_INT=$(echo "$HUM_EXT + 2" | bc)
           PRESION=$((1010 + (RANDOM % 10)))
           ALTITUD=30
           PESO=$((50 + (RANDOM % 6)))
 
-          echo "Valores a enviar:"
-          echo " TEMP_INT=${TEMP_INT}"
-          echo " HUM_INT=${HUM_INT}"
-          echo " PRESION=${PRESION}"
-          echo " ALTITUD=${ALTITUD}"
-          echo " PESO=${PESO}"
-          echo " TEMP_EXT=${TEMP_EXT}"
-          echo " HUM_EXT=${HUM_EXT}"
+          echo "Preparando datos para enviar..."
+          echo "Temperatura interna: $TEMP_INT"
+          echo "Temperatura externa: $TEMP_EXT"
 
-          # Enviar a ThingSpeak (POST form)
-          TS_URL="https://api.thingspeak.com/update.json"
-          resp=$(curl -s -w "%{http_code}" -o /tmp/ts_resp.txt -X POST "${TS_URL}" \
+          RESPONSE=$(curl -s -X POST "https://api.thingspeak.com/update.json" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data "api_key=${THINGS_KEY}&field1=${TEMP_INT}&field2=${HUM_INT}&field3=${PRESION}&field4=${ALTITUD}&field5=${PESO}&field6=${TEMP_EXT}&field7=${HUM_EXT}")
 
-          http_code="$resp"
-          body="$(cat /tmp/ts_resp.txt || true)"
+          echo "Respuesta de ThingSpeak: $RESPONSE"
+          ENTRY_ID=$(echo "$RESPONSE" | jq -r '.entry_id // 0')
+          echo "entry_id=${ENTRY_ID}" >> $GITHUB_OUTPUT
 
-          echo "ThingSpeak HTTP status: ${http_code}"
-          echo "ThingSpeak body: ${body}"
+      - name: Guardar entry_id para la página
+        run: |
+          mkdir -p public
+          echo "${{ steps.envio.outputs.entry_id }}" > public/last_entry.txt
 
-          if [ "$http_code" -ne 200 ] && [ "$http_code" -ne 201 ]; then
-            echo "ERROR: ThingSpeak respondió con código HTTP ${http_code}"
-            exit 1
-          fi
-
-          # ThingSpeak devuelve un número (entry_id) > 0 si fue exitoso
-          if ! echo "$body" | grep -E '^[0-9]+$' >/dev/null 2>&1; then
-            echo "WARNING: Respuesta inesperada de ThingSpeak: $body"
-          else
-            if [ "$body" -eq 0 ]; then
-              echo "WARNING: ThingSpeak devolvió 0 => error al crear entrada (posible formato inválido o rate limit)."
-            else
-              echo "Éxito: entry_id = $body"
-            fi
-          fi
+      - name: Subir entry_id al repositorio
+        uses: actions/upload-artifact@v4
+        with:
+          name: last_entry
+          path: public/last_entry.txt
